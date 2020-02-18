@@ -202,6 +202,10 @@ func resourceDataflowJobCreate(d *schema.ResourceData, meta interface{}) error {
 	}
 	d.SetId(job.Id)
 
+	if err := waitForJobToStart(d, config, d.Timeout(schema.TimeoutCreate)); err != nil {
+		return fmt.Errorf("Error waiting for Dataflow Job %q to start: %q", d.Get("name").(string), err)
+	}
+
 	return resourceDataflowJobRead(d, meta)
 }
 
@@ -255,6 +259,10 @@ func resourceDataflowJobDelete(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	id := d.Id()
+
+	if err := waitForJobToStart(d, config, d.Timeout(schema.TimeoutCreate)); err != nil {
+		return fmt.Errorf("Error waiting for Dataflow Job %q to start before deleting: %q", d.Get("name").(string), err)
+	}
 
 	requestedState, err := resourceDataflowJobMapRequestedState(d.Get("on_delete").(string))
 	if err != nil {
@@ -348,4 +356,20 @@ func resourceDataflowJobUpdateJob(config *Config, project string, region string,
 		return config.clientDataflow.Projects.Jobs.Update(project, id, job).Do()
 	}
 	return config.clientDataflow.Projects.Locations.Jobs.Update(project, region, id, job).Do()
+}
+
+func waitForJobToStart(d *schema.ResourceData, config *Config, timeout time.Duration) error {
+	return resource.Retry(timeout, func() *resource.RetryError {
+		if err := resourceDataflowJobRead(d, config); err != nil {
+			return resource.NonRetryableError(err)
+		}
+
+		name := d.Get("name").(string)
+		state := d.Get("state").(string)
+		if state == "JOB_STATE_PENDING" {
+			return resource.RetryableError(fmt.Errorf("Dataflow Job %q has state %q.", name, state))
+		}
+		log.Printf("Dataflow Job %q has state %q.", name, state)
+		return nil
+	})
 }
